@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+motor
+pydantic
+pydantic-settings
+celery
+redis
+langgraph
+langchain
+langchain-core
+langchain-groq
+tavily-python
+pytest
+pytest-asyncio
+pytest-mock
+httpx
+pytest-cov
