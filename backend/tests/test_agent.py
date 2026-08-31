@@ -8,31 +8,62 @@ def mock_llm_mode(mocker):
     # Force mock mode to avoid hitting real LLMs
     mocker.patch.object(settings, "MOCK_LLM_FOR_LOAD_TEST", True)
     
-    # Also mock Redis publish to avoid connection errors during testing
-    mocker.patch("app.agent.nodes.redis_client.publish")
+    # No longer need to mock redis_client.publish globally
+    # since we use MockPubSubService via dependency injection
 
-def test_planner_node():
+class MockPubSubService:
+    def publish_update(self, job_id, step_name, status):
+        pass
+
+class MockTavilyService:
+    def search(self, query: str, search_depth: str = "basic", max_results: int = 3):
+        return [{"url": "http://mock.url", "content": "Mock search result content."}]
+
+class MockLLMService:
+    def generate_sub_topics(self, query: str):
+        return ["Mock topic 1", "Mock topic 2", "Mock topic 3"]
+
+    def sanitize_search_results(self, raw_results):
+        return "Mock sanitized content based on search results."
+
+    def synthesize_report(self, query: str, sanitized_content: str, critique: str):
+        return f"# Mock Report for {query}\n\nThis is a mocked report generated for load testing purposes. It bypasses the real LLM."
+
+    def critique_report(self, query: str, draft_report: str):
+        return "APPROVED"
+
+class MockDeps:
+    def __init__(self):
+        self.pubsub = MockPubSubService()
+        self.tavily = MockTavilyService()
+        self.llm = MockLLMService()
+
+@pytest.fixture
+def mock_config():
+    return {"configurable": {"deps": MockDeps()}}
+
+def test_planner_node(mock_config):
     state = {"job_id": "123", "query": "test query", "iteration_count": 0}
-    result = planner_node(state)
+    result = planner_node(state, mock_config)
     
     assert "sub_topics" in result
     assert isinstance(result["sub_topics"], list)
     assert len(result["sub_topics"]) == 3
     assert result["iteration_count"] == 0
 
-def test_sanitization_node():
+def test_sanitization_node(mock_config):
     state = {
         "job_id": "123", 
         "search_results": [{"topic": "test", "results": [{"content": "dirty data"}]}]
     }
-    result = sanitization_node(state)
+    result = sanitization_node(state, mock_config)
     
     assert "sanitized_content" in result
     assert "Mock sanitized content" in result["sanitized_content"]
 
-def test_critique_node():
+def test_critique_node(mock_config):
     state = {"job_id": "123", "query": "test", "draft_report": "draft"}
-    result = critique_node(state)
+    result = critique_node(state, mock_config)
     
     assert "critique" in result
     assert result["critique"] == "APPROVED"

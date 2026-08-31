@@ -34,11 +34,36 @@ async def run_agent(job_id: str):
             "iteration_count": 0
         }
         
+        from app.services.pubsub_service import PubSubService
+        from app.services.tavily_service import TavilyService, MockTavilyService
+        from app.services.llm_service import LLMService, MockLLMService
+        from app.services.deps import Deps
+        from tavily import TavilyClient
+        
+        if settings.MOCK_LLM_FOR_LOAD_TEST:
+            tavily_service = MockTavilyService()
+            llm_service = MockLLMService()
+        else:
+            tavily_service = TavilyService(TavilyClient(api_key=settings.TAVILY_API_KEY))
+            llm_service = LLMService(
+                groq_model=settings.GROQ_MODEL,
+                groq_fast_model=settings.GROQ_FAST_MODEL,
+                api_key=settings.GROQ_API_KEY
+            )
+        
+        deps = Deps(
+            pubsub_service=PubSubService(redis_client),
+            tavily_service=tavily_service,
+            llm_service=llm_service
+        )
+        
         # Run LangGraph pipeline
-        final_state = await asyncio.to_thread(
-            agent_graph.invoke,
+        final_state = await agent_graph.ainvoke(
             initial_state,
-            {"recursion_limit": 25}
+            {
+                "recursion_limit": 25,
+                "configurable": {"deps": deps}
+            }
         )
         
         draft_report = final_state.get("draft_report", "")
