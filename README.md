@@ -1,7 +1,5 @@
 # Cortex AI - Autonomous Research Copilot
 
-![CI Pipeline](https://github.com/yourusername/cortex/actions/workflows/ci.yml/badge.svg)
-
 Cortex AI is an autonomous, multi-agent research copilot that processes user queries, breaks them down into targeted sub-topics, searches the web, sanitizes data, and iteratively synthesizes a comprehensive report through a critique-driven agent loop.
 
 ## Architecture
@@ -42,7 +40,7 @@ flowchart TD
 
     %% Relationships and Data Flow
     UI -- "HTTP POST /api/jobs" --> FastAPI
-    UI <-- "Server-Sent Events (SSE)\n/api/jobs/{id}/stream" --- FastAPI
+    FastAPI -- "Server-Sent Events (SSE)\n/api/jobs/{id}/stream" --> UI
 
     FastAPI -- "Create initial Job\n(Pydantic v2 validation)" --> MongoDB
     FastAPI -- "Dispatch Celery Task" --> Redis
