@@ -6,15 +6,91 @@ Cortex AI is an autonomous, multi-agent research copilot that processes user que
 
 ## Architecture
 
+### High-Level Infrastructure & Decoupled Data Flow
 ```mermaid
-flowchart LR
-    UI[React UI] -->|HTTP POST/GET| FastAPI[FastAPI Backend]
-    UI -.->|SSE Stream| FastAPI
-    FastAPI -->|Async/Sync Pool| Redis[Redis Pub/Sub]
-    FastAPI -->|Task Dispatch| Celery[Celery Workers]
-    Celery -->|LangGraph Execution| LangGraph[LangGraph Engine]
-    LangGraph -->|Read/Write| MongoDB[(MongoDB)]
-    LangGraph -.->|Status Updates| Redis
+flowchart TD
+    %% Client Layer
+    subgraph ClientLayer [Client Layer]
+        UI[React/Vite UI\nPort: 5173]
+    end
+
+    %% API Gateway Layer
+    subgraph WebLayer [API Gateway / Web Layer]
+        FastAPI[FastAPI Web Server\nPort: 8000]
+    end
+
+    %% Broker & Streaming Layer
+    subgraph BrokerLayer [Broker & Streaming Layer]
+        Redis[(Redis\nPort: 6379\nBroker & Pub/Sub)]
+    end
+
+    %% Persistence Layer
+    subgraph PersistenceLayer [Persistence Layer]
+        MongoDB[(MongoDB\nPort: 27017\nDurable State)]
+    end
+
+    %% Compute Worker Layer
+    subgraph WorkerLayer [Compute Worker Layer]
+        CeleryWorker[Celery Worker\nLangGraph Engine]
+    end
+
+    %% External Integrations
+    subgraph External [External Integrations]
+        GroqAPI(Groq LLM API\nopenai/gpt-oss-120b/20b)
+        TavilyAPI(Tavily Search API)
+    end
+
+    %% Relationships and Data Flow
+    UI -- "HTTP POST /api/jobs" --> FastAPI
+    UI <-- "Server-Sent Events (SSE)\n/api/jobs/{id}/stream" --- FastAPI
+
+    FastAPI -- "Create initial Job\n(Pydantic v2 validation)" --> MongoDB
+    FastAPI -- "Dispatch Celery Task" --> Redis
+
+    Redis -- "Task Broker" --> CeleryWorker
+    CeleryWorker -- "Update Job State &\nSave Synthesized Report" --> MongoDB
+
+    CeleryWorker -- "Agentic Inference" --> GroqAPI
+    CeleryWorker -- "Query Fan-out" --> TavilyAPI
+
+    CeleryWorker -- "Publish State/Token\nEvents (job_updates:{id})" --> Redis
+    Redis -- "Stream live events" --> FastAPI
+```
+
+### LangGraph Agent Execution & Decision Cycle
+```mermaid
+stateDiagram-v2
+    direction TB
+
+    %% Entry point
+    [*] --> sanitization_node : Ingress (Input Defense)
+
+    %% Nodes
+    state "sanitization_node" as sanitization_node
+    state "planner_node" as planner_node
+    state "tavily_node\n(Parallel Search Tasks)" as tavily_node
+    state "synthesis_node" as synthesis_node
+    state "critique_node" as critique_node
+    state "Circuit Breaker / Loop Decision" as decision <<choice>>
+
+    %% Data Flow
+    sanitization_node --> planner_node : Clean Input / Query Decomposition
+    planner_node --> tavily_node : Sub-goals & Queries
+    tavily_node --> synthesis_node : Intermediate Draft Assembly\n(Parallel Results)
+    synthesis_node --> critique_node : Draft Report Quality Evaluation
+    critique_node --> decision : Evaluation Result
+
+    %% Conditional Edges
+    decision --> planner_node : REVISE and iteration < MAX_ITERATIONS
+    decision --> synthesis_node : REVISE and iteration < MAX_ITERATIONS\n(Alternative route)
+    decision --> [*] : APPROVED or iteration >= MAX_ITERATIONS\n(Circuit Breaker)
+
+    %% Event Publishing Notes
+    note right of sanitization_node : Publish Status -> Redis Pub/Sub
+    note right of planner_node : Publish Status -> Redis Pub/Sub
+    note right of tavily_node : Publish Status -> Redis Pub/Sub
+    note right of synthesis_node : Publish Status & Tokens -> Redis Pub/Sub
+    note right of critique_node : Publish Status -> Redis Pub/Sub
 ```
 
 ## Key Engineering Highlights
