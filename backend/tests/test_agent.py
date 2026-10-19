@@ -9,14 +9,12 @@ def mock_llm_mode(mocker):
     mocker.patch.object(settings, "MOCK_LLM_FOR_LOAD_TEST", True)
     
     # No longer need to mock redis_client.publish globally
-    # since we use MockPubSubService via dependency injection
+    # since we use MagicMock via dependency injection
 
-class MockPubSubService:
-    def publish_update(self, job_id, step_name, status):
-        pass
+from unittest.mock import MagicMock
 
 class MockTavilyService:
-    def search(self, query: str, search_depth: str = "basic", max_results: int = 3):
+    def search(self, query: str):
         return [{"url": "http://mock.url", "content": "Mock search result content."}]
 
 class MockLLMService:
@@ -34,7 +32,7 @@ class MockLLMService:
 
 class MockDeps:
     def __init__(self):
-        self.pubsub = MockPubSubService()
+        self.pubsub = MagicMock()
         self.tavily = MockTavilyService()
         self.llm = MockLLMService()
 
@@ -43,13 +41,12 @@ def mock_config():
     return {"configurable": {"deps": MockDeps()}}
 
 def test_planner_node(mock_config):
-    state = {"job_id": "123", "query": "test query", "iteration_count": 0}
+    state = {"job_id": "123", "query": "test query"}
     result = planner_node(state, mock_config)
     
     assert "sub_topics" in result
     assert isinstance(result["sub_topics"], list)
     assert len(result["sub_topics"]) == 3
-    assert result["iteration_count"] == 0
 
 def test_sanitization_node(mock_config):
     state = {

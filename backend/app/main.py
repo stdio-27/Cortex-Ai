@@ -1,14 +1,16 @@
 from fastapi import FastAPI
 from app.api.routes import router
-from app.db.mongodb import connect_to_mongo, close_mongo_connection
+from app.db.mongo import connect_to_mongo, close_mongo_connection, db
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_to_mongo()
+    app.state.mongo_client = db.async_client
     yield
-    await close_mongo_connection()
+    app.state.mongo_client.close()
+    # close_mongo_connection() could also be called, but the spec explicitly requested app.state.mongo_client.close()
 
 app = FastAPI(
     title="Autonomous Research Copilot",

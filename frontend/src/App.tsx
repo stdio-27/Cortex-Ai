@@ -1,14 +1,24 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './App.css';
 import { useJobStore } from './store/useJobStore';
 import ReportViewer from './components/ReportViewer';
 
-const STEPS = ['Planner', 'Search', 'Synthesizing', 'Critiquing'];
+const STEPS = ['Planner', 'Search', 'Synthesizing', 'Verification', 'Critiquing'];
 
 function App() {
   const [query, setQuery] = useState('');
   
-  const { status, currentStep, error, reportContent, startJob } = useJobStore();
+  const { status, currentStep, error, reportContent, subTopics, startJob, resumeJob, jobId } = useJobStore();
+  
+  const [editedTopics, setEditedTopics] = useState<string[]>([]);
+  const [newTopic, setNewTopic] = useState('');
+  
+  // Initialize editedTopics when entering AWAITING_INPUT state
+  useEffect(() => {
+      if (status === 'AWAITING_INPUT') {
+          setEditedTopics(subTopics);
+      }
+  }, [status, subTopics]);
 
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans selection:bg-indigo-500/30 flex flex-col items-center py-20 px-4 relative overflow-hidden">
@@ -72,7 +82,8 @@ function App() {
                     {index === 0 && '📝'}
                     {index === 1 && '🔍'}
                     {index === 2 && '🧠'}
-                    {index === 3 && '⚖️'}
+                    {index === 3 && '🔎'}
+                    {index === 4 && '⚖️'}
                   </div>
                   <span className={`font-semibold tracking-wide transition-colors duration-300
                     ${isPast || isCurrent ? 'text-gray-100' : 'text-gray-500'}
@@ -104,6 +115,63 @@ function App() {
                 <span className="text-xl">⚠️</span>
                 <span className="font-semibold text-lg">Error: {error || 'Job failed during execution'}</span>
               </div>
+            </div>
+          )}
+          
+          {status === 'AWAITING_INPUT' && (
+            <div className="mt-16 p-8 bg-gray-800/60 rounded-3xl border border-indigo-500/30 shadow-2xl animate-fade-in-up max-w-2xl mx-auto">
+                <h3 className="text-xl font-bold text-indigo-400 mb-4">Human-in-the-Loop Feedback Required</h3>
+                <p className="text-gray-300 mb-6">Review the planned search queries. You can remove existing ones or add new ones before continuing.</p>
+                
+                <div className="space-y-3 mb-6">
+                    {editedTopics.map((topic, idx) => (
+                        <div key={idx} className="flex items-center gap-3 bg-gray-900/50 p-3 rounded-xl border border-gray-700">
+                            <span className="flex-1 text-gray-200">{topic}</span>
+                            <button 
+                                onClick={() => setEditedTopics(editedTopics.filter((_, i) => i !== idx))}
+                                className="text-red-400 hover:text-red-300 transition-colors"
+                            >
+                                ✖
+                            </button>
+                        </div>
+                    ))}
+                </div>
+                
+                <div className="flex gap-3 mb-8">
+                    <input 
+                        type="text" 
+                        value={newTopic}
+                        onChange={e => setNewTopic(e.target.value)}
+                        placeholder="Add a custom search query..."
+                        className="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2 text-white outline-none focus:border-indigo-500"
+                        onKeyDown={e => {
+                            if (e.key === 'Enter' && newTopic.trim()) {
+                                setEditedTopics([...editedTopics, newTopic.trim()]);
+                                setNewTopic('');
+                            }
+                        }}
+                    />
+                    <button 
+                        onClick={() => {
+                            if (newTopic.trim()) {
+                                setEditedTopics([...editedTopics, newTopic.trim()]);
+                                setNewTopic('');
+                            }
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-xl text-white transition-colors"
+                    >
+                        Add
+                    </button>
+                </div>
+                
+                <button 
+                    onClick={() => {
+                        if (jobId) resumeJob(jobId, editedTopics);
+                    }}
+                    className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 rounded-xl transition-all shadow-[0_0_15px_rgba(99,102,241,0.5)] transform active:scale-95"
+                >
+                    Resume Research
+                </button>
             </div>
           )}
         </div>

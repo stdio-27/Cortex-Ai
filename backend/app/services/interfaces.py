@@ -1,11 +1,7 @@
 from typing import Protocol, List, Dict, Any
 
-class PubSubProvider(Protocol):
-    def publish_update(self, job_id: str, step_name: str, status: str) -> None:
-        ...
-
 class SearchProvider(Protocol):
-    def search(self, query: str, search_depth: str = "basic", max_results: int = 3) -> List[Dict[str, Any]]:
+    def search(self, query: str) -> List[Dict[str, Any]]:
         ...
 
 class LLMProvider(Protocol):

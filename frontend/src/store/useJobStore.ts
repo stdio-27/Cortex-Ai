@@ -1,14 +1,17 @@
 import { create } from 'zustand';
 
-type JobStep = 'Planner' | 'Search' | 'Synthesizing' | 'Critiquing' | 'DONE' | 'ERROR';
+type JobStep = 'Planner' | 'AWAITING_HUMAN_FEEDBACK' | 'Search' | 'Synthesizing' | 'Verification' | 'Critiquing' | 'DONE' | 'ERROR';
 
 interface JobState {
   jobId: string | null;
-  status: 'IDLE' | 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  status: 'IDLE' | 'PENDING' | 'PROCESSING' | 'AWAITING_INPUT' | 'COMPLETED' | 'FAILED';
   currentStep: JobStep | null;
   error?: string;
   reportContent: string | null;
+  subTopics: string[];
+  verificationMetadata: any | null;
   startJob: (query: string) => Promise<void>;
+  resumeJob: (jobId: string, approvedQueries: string[]) => Promise<void>;
   listenToJob: (jobId: string) => void;
   fetchReport: (jobId: string) => Promise<void>;
   reset: () => void;
@@ -21,6 +24,8 @@ export const useJobStore = create<JobState>((set, get) => ({
   status: 'IDLE',
   currentStep: null,
   reportContent: null,
+  subTopics: [],
+  verificationMetadata: null,
 
   reset: () => {
     if (eventSource) {
@@ -33,6 +38,8 @@ export const useJobStore = create<JobState>((set, get) => ({
       currentStep: null,
       error: undefined,
       reportContent: null,
+      subTopics: [],
+      verificationMetadata: null,
     });
   },
 
@@ -61,6 +68,23 @@ export const useJobStore = create<JobState>((set, get) => ({
     }
   },
 
+  resumeJob: async (jobId: string, approvedQueries: string[]) => {
+    set({ status: 'PROCESSING', currentStep: 'Search' });
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/resume`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ approved_queries: approvedQueries })
+      });
+
+      if (!res.ok) throw new Error('Failed to resume job');
+    } catch (error: any) {
+      set({ status: 'FAILED', currentStep: 'ERROR', error: error.message });
+    }
+  },
+
   listenToJob: (jobId: string) => {
     if (eventSource) {
       eventSource.close();
@@ -69,18 +93,25 @@ export const useJobStore = create<JobState>((set, get) => ({
     eventSource = new EventSource(`/api/jobs/${jobId}/stream`);
 
     eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log("SSE Event:", data);
+      const parsedEvent = JSON.parse(event.data);
+      console.log("SSE Event:", parsedEvent);
       
-      if (data.step === 'DONE') {
+      const payload = parsedEvent.data || {};
+      const step = payload.step;
+      
+      if (parsedEvent.event_type === 'COMPLETED' || step === 'DONE') {
         set({ status: 'COMPLETED', currentStep: 'DONE' });
         eventSource?.close();
         get().fetchReport(jobId);
-      } else if (data.step === 'ERROR') {
-        set({ status: 'FAILED', currentStep: 'ERROR' });
+      } else if (parsedEvent.event_type === 'ERROR' || step === 'ERROR') {
+        set({ status: 'FAILED', currentStep: 'ERROR', error: payload.error });
         eventSource?.close();
-      } else {
-        set({ currentStep: data.step });
+      } else if (parsedEvent.event_type === 'AWAITING_INPUT' || step === 'AWAITING_HUMAN_FEEDBACK') {
+        set({ status: 'AWAITING_INPUT', currentStep: 'AWAITING_HUMAN_FEEDBACK', subTopics: payload.sub_topics || [] });
+      } else if (step === 'VERIFICATION_COMPLETE') {
+        set({ verificationMetadata: payload.verification_metadata });
+      } else if (step) {
+        set({ currentStep: step });
       }
     };
 
@@ -95,7 +126,10 @@ export const useJobStore = create<JobState>((set, get) => ({
       const res = await fetch(`/api/jobs/${jobId}`);
       if (!res.ok) throw new Error('Failed to fetch report');
       const data = await res.json();
-      set({ reportContent: data.report || null });
+      set({ 
+          reportContent: data.report || null,
+          verificationMetadata: data.verification_metadata || get().verificationMetadata
+      });
     } catch (error: any) {
       console.error("Error fetching report:", error);
     }

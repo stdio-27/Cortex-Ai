@@ -15,3 +15,7 @@ pytest-asyncio
 pytest-mock
 httpx
 pytest-cov
+langgraph-checkpoint-mongodb
+groq
+fakeredis
+lupa

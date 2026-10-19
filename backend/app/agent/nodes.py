@@ -1,24 +1,18 @@
 import json
-import time
+import hashlib
 from app.core.redis import get_redis_client
 from app.core.config import settings
 from app.agent.state import AgentState
-# Langchain imports moved to LLMService
-# Tavily Client import removed (moved to service)
-
 from langchain_core.runnables import RunnableConfig
+from tenacity import retry, stop_after_attempt, retry_if_exception
+
+def _is_retryable(e: BaseException) -> bool:
+    error_msg = str(e).lower()
+    return "timeout" in error_msg or "connection" in error_msg or "50" in error_msg
 
 # The global publish_update has been removed in favor of injected PubSubService
-
 # LLM clients are now injected via LLMService
-from typing import TypedDict, List
-
-class PlannerState(TypedDict, total=False):
-    job_id: str
-    query: str
-    iteration_count: int
-
-def planner_node(state: PlannerState, config: RunnableConfig):
+def planner_node(state: AgentState, config: RunnableConfig):
     deps = config.get("configurable", {}).get("deps")
     job_id = state.get("job_id")
     if deps and deps.pubsub:
@@ -33,7 +27,7 @@ def planner_node(state: PlannerState, config: RunnableConfig):
     
     if deps and deps.pubsub:
         deps.pubsub.publish_update(job_id, "Planner", "COMPLETED")
-    return {"sub_topics": sub_topics, "iteration_count": state.get("iteration_count", 0)}
+    return {"sub_topics": sub_topics}
 
 from typing import TypedDict
 
@@ -50,7 +44,26 @@ def search_node(state: SubTopicState, config: RunnableConfig):
         deps.pubsub.publish_update(job_id, "Search", "IN_PROGRESS")
     
     if deps and deps.tavily:
-        results = deps.tavily.search(query=topic, search_depth="basic", max_results=3)
+        @retry(stop=stop_after_attempt(3), retry=retry_if_exception(_is_retryable), reraise=True)
+        def _do_search():
+            query_hash = hashlib.sha256(topic.encode()).hexdigest()
+            cache_key = f"cache:search:{query_hash}"
+            redis_client = get_redis_client()
+            cached = redis_client.get(cache_key)
+            if cached:
+                if deps.pubsub:
+                    deps.pubsub.publish_status(job_id, "search", {"step": "CACHE_HIT", "topic": topic})
+                return json.loads(cached)
+                
+            res = deps.tavily.search(query=topic)
+            redis_client.setex(cache_key, 86400, json.dumps(res))
+            return res
+            
+        try:
+            results = _do_search()
+        except Exception as e:
+            print(f"search_node: Exhausted attempts or non-retryable error for '{topic}': {e}. Degrading gracefully.")
+            results = []
     else:
         results = []
     
@@ -58,11 +71,7 @@ def search_node(state: SubTopicState, config: RunnableConfig):
         deps.pubsub.publish_update(job_id, "Search", "COMPLETED")
     return {"search_results": [{"topic": topic, "results": results}]}
 
-class SanitizationState(TypedDict, total=False):
-    job_id: str
-    search_results: list
-
-def sanitization_node(state: SanitizationState, config: RunnableConfig):
+def sanitization_node(state: AgentState, config: RunnableConfig):
     deps = config.get("configurable", {}).get("deps")
     job_id = state.get("job_id")
     # We do not have a specific UI step for Sanitization in the frontend graph, 
@@ -78,14 +87,7 @@ def sanitization_node(state: SanitizationState, config: RunnableConfig):
     
     return {"sanitized_content": sanitized}
 
-class SynthesizerState(TypedDict, total=False):
-    job_id: str
-    query: str
-    sanitized_content: str
-    critique: str
-    iteration_count: int
-
-def synthesizer_node(state: SynthesizerState, config: RunnableConfig):
+def synthesizer_node(state: AgentState, config: RunnableConfig):
     deps = config.get("configurable", {}).get("deps")
     job_id = state.get("job_id")
     if deps and deps.pubsub:
@@ -106,12 +108,40 @@ def synthesizer_node(state: SynthesizerState, config: RunnableConfig):
         deps.pubsub.publish_update(job_id, "Synthesizing", "COMPLETED")
     return {"draft_report": draft, "iteration_count": iteration_count}
 
-class CritiqueState(TypedDict, total=False):
-    job_id: str
-    query: str
-    draft_report: str
+def verification_node(state: AgentState, config: RunnableConfig):
+    deps = config.get("configurable", {}).get("deps")
+    job_id = state.get("job_id")
+    if deps and deps.pubsub:
+        deps.pubsub.publish_update(job_id, "Verification", "IN_PROGRESS")
+    
+    draft = state.get("draft_report", "")
+    search_results = state.get("search_results", [])
+    
+    if deps and deps.llm:
+        verdict = deps.llm.verify_report(draft, search_results)
+    else:
+        verdict = {
+            "verification_score": 100.0,
+            "supported_claims_count": 0,
+            "unverified_claims": [],
+            "confidence_tier": "HIGH"
+        }
+    
+    if deps and deps.pubsub:
+        deps.pubsub.publish_update(job_id, "Verification", "COMPLETED")
+        deps.pubsub.publish_status(
+            job_id,
+            "verification",
+            {
+                "status": "PROCESSING",
+                "step": "VERIFICATION_COMPLETE",
+                "verification_metadata": verdict,
+            },
+        )
 
-def critique_node(state: CritiqueState, config: RunnableConfig):
+    return {"verification_metadata": verdict}
+
+def critique_node(state: AgentState, config: RunnableConfig):
     deps = config.get("configurable", {}).get("deps")
     job_id = state.get("job_id")
     if deps and deps.pubsub:

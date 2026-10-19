@@ -6,14 +6,14 @@ from pathlib import Path
 # Run this inside the container directly:
 # docker exec cortex-web-1 python verify_concurrency.py
 
+from unittest.mock import MagicMock
 from app.agent.graph import agent_graph
 from app.services.deps import Deps
 from app.services.tavily_service import MockTavilyService
 from app.services.llm_service import MockLLMService
-from app.services.pubsub_service import MockPubSubService
 
 class SlowMockTavilyService(MockTavilyService):
-    def search(self, query: str, search_depth: str = "basic", max_results: int = 3):
+    def search(self, query: str):
         # Simulate a slow API call taking exactly 2 seconds
         time.sleep(2)
         return [{"url": "http://mock.url", "content": f"Mock result for {query}"}]
@@ -21,7 +21,7 @@ class SlowMockTavilyService(MockTavilyService):
 async def test_concurrency():
     # Setup deps with the slow mock search service
     deps = Deps(
-        pubsub_service=MockPubSubService(),
+        pubsub_service=MagicMock(),
         tavily_service=SlowMockTavilyService(),
         llm_service=MockLLMService()
     )

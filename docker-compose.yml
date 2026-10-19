@@ -9,12 +9,16 @@ services:
       - ./backend:/app
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       - MONGODB_URI=mongodb://mongodb:27017
       - REDIS_URI=redis://redis:6379/0
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
-      - MOCK_LLM_FOR_LOAD_TEST=${MOCK_LLM_FOR_LOAD_TEST:-false}
+      - REDIS_PUBSUB_URI=redis://redis:6379/1
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - MOCK_LLM_FOR_LOAD_TEST=${MOCK_LLM_FOR_LOAD_TEST}
+      - GROQ_MODEL=${GROQ_MODEL}
     depends_on:
       - mongodb
       - redis
@@ -27,12 +31,16 @@ services:
     command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2
     volumes:
       - ./backend:/app
+    env_file:
+      - .env
     environment:
       - MONGODB_URI=mongodb://mongodb:27017
       - REDIS_URI=redis://redis:6379/0
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
-      - MOCK_LLM_FOR_LOAD_TEST=${MOCK_LLM_FOR_LOAD_TEST:-false}
+      - REDIS_PUBSUB_URI=redis://redis:6379/1
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - MOCK_LLM_FOR_LOAD_TEST=${MOCK_LLM_FOR_LOAD_TEST}
+      - GROQ_MODEL=${GROQ_MODEL}
     depends_on:
       - mongodb
       - redis

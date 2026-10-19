@@ -40,9 +40,10 @@ flowchart TD
 
     %% Relationships and Data Flow
     UI -- "HTTP POST /api/jobs" --> FastAPI
+    UI -- "HTTP POST /api/jobs/{id}/resume\n(HITL Checkpoint)" --> FastAPI
     FastAPI -- "Server-Sent Events (SSE)\n/api/jobs/{id}/stream" --> UI
 
-    FastAPI -- "Create initial Job\n(Pydantic v2 validation)" --> MongoDB
+    FastAPI -- "Create/Resume Job\n(Pydantic v2 validation)" --> MongoDB
     FastAPI -- "Dispatch Celery Task" --> Redis
 
     Redis -- "Task Broker" --> CeleryWorker
@@ -61,26 +62,27 @@ stateDiagram-v2
     direction TB
 
     %% Entry point
-    [*] --> sanitization_node : Ingress (Input Defense)
+    [*] --> planner_node : Ingress
 
     %% Nodes
-    state "sanitization_node" as sanitization_node
     state "planner_node" as planner_node
     state "tavily_node\n(Parallel Search Tasks)" as tavily_node
+    state "sanitization_node" as sanitization_node
     state "synthesis_node" as synthesis_node
+    state "verification_node" as verification_node
     state "critique_node" as critique_node
     state "Circuit Breaker / Loop Decision" as decision <<choice>>
 
     %% Data Flow
-    sanitization_node --> planner_node : Clean Input / Query Decomposition
-    planner_node --> tavily_node : Sub-goals & Queries
-    tavily_node --> synthesis_node : Intermediate Draft Assembly\n(Parallel Results)
-    synthesis_node --> critique_node : Draft Report Quality Evaluation
+    planner_node --> tavily_node : Sub-goals & Queries\n(HITL Checkpoint)
+    tavily_node --> sanitization_node : Search Results\n(Redis Cached)
+    sanitization_node --> synthesis_node : Clean Input
+    synthesis_node --> verification_node : Draft Assembly
+    verification_node --> critique_node : Self-RAG Fact Check
     critique_node --> decision : Evaluation Result
 
     %% Conditional Edges
-    decision --> planner_node : REVISE and iteration < MAX_ITERATIONS
-    decision --> synthesis_node : REVISE and iteration < MAX_ITERATIONS\n(Alternative route)
+    decision --> synthesis_node : REVISE and iteration < MAX_ITERATIONS
     decision --> [*] : APPROVED or iteration >= MAX_ITERATIONS\n(Circuit Breaker)
 
     %% Event Publishing Notes
@@ -93,7 +95,10 @@ stateDiagram-v2
 
 ## Key Engineering Highlights
 
-- **Multi-Agent Critique Loops:** Utilizes LangGraph to implement a dynamic cyclic graph where a Planner, Searcher, Synthesizer, and Critic iteratively refine research reports. A circuit breaker ensures the graph halts upon receiving an "APPROVED" critique or reaching maximum iterations.
+- **Multi-Agent Critique Loops:** Utilizes LangGraph to implement a dynamic cyclic graph where a Planner, Searcher, Synthesizer, Verifier, and Critic iteratively refine research reports. A circuit breaker ensures the graph halts upon receiving an "APPROVED" critique or reaching maximum iterations.
+- **Human-in-the-Loop (HITL) Steerability:** Uses `langgraph-checkpoint-mongodb` to pause graph execution after the planning phase, awaiting human approval or modification of sub-queries before resuming.
+- **Self-RAG Fact Verification:** Includes a dedicated `verification_node` that cross-examines generated claims against retrieved search snippets, outputting a hallucination confidence score.
+- **Redis-Backed Semantic Search Caching:** Caches search results using SHA-256 hashes of queries with 24-hour TTL to reduce redundant external API calls.
 - **Prompt Sanitization Boundary:** Implements a dedicated sanitization node to strip HTML tags, system prompt injection attempts, and noise from raw search results before passing data to the synthesizer.
 - **Centralized Connection Pooling:** Maintains highly concurrent async and sync Redis connection pools with `max_connections=2000`, supporting robust pub/sub and task queuing under heavy load.
 - **Real-Time SSE Streaming:** Delivers low-latency status updates to the React UI via Server-Sent Events (SSE), bridging FastAPI streaming responses with Redis pub/sub channels.
@@ -141,4 +146,4 @@ A robust Locust test suite is provided to validate backend concurrency (e.g., si
 
 ## License
 
-MIT License
+Copyright (c) 2026 Bikash Bhattacharjee. All Rights Reserved.

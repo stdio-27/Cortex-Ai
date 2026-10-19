@@ -1,3 +1,4 @@
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from app.main import app
@@ -18,7 +19,7 @@ def mock_mongo(mocker):
     mock_client = MagicMock()
     mock_client.__getitem__.return_value = mock_db
     
-    mocker.patch("app.api.routes.db.client", new=mock_client)
+    mocker.patch("app.api.routes.db.async_client", new=mock_client)
     return mock_collection
 
 @pytest.fixture
@@ -38,9 +39,15 @@ def mock_redis(mocker):
     
     # Mock get_message to return a dummy DONE message to end the stream
     mock_pubsub.get_message = AsyncMock(side_effect=[
-        {"type": "message", "data": b'{"job_id": "123", "step": "DONE", "status": "COMPLETED"}'}
+        {"type": "message", "data": json.dumps({
+            "version": "1.0", "job_id": "123", "event_type": "COMPLETED", "stage": "finished",
+            "data": {"step": "DONE", "status": "COMPLETED"}, "timestamp": 0.0,
+        }).encode()}
     ])
     
     mock_client.pubsub.return_value = mock_pubsub
-    mocker.patch("app.api.routes.get_async_redis_client", return_value=mock_client)
+    mock_client.get = AsyncMock(return_value=None)
+    mock_client.delete = AsyncMock()
+    mocker.patch("app.api.routes.get_async_redis_pubsub_client", return_value=mock_client)
+    mock_pubsub.client = mock_client
     return mock_pubsub

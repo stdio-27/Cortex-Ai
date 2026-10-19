@@ -8,5 +8,6 @@ class AgentState(TypedDict):
     search_results: Annotated[List[dict], operator.add]
     sanitized_content: str
     draft_report: str
+    verification_metadata: dict
     critique: str
     iteration_count: int

@@ -1,6 +1,6 @@
 from typing import Annotated
 from langgraph.graph import END, StateGraph  # type: ignore[reportMissingImports]
-from langgraph.types import RetryPolicy, Send  # type: ignore[reportMissingImports]
+from langgraph.types import Send  # type: ignore[reportMissingImports]
 from app.agent.state import AgentState
 from app.agent.nodes import (
     planner_node,
@@ -29,22 +29,21 @@ def should_continue(state: AgentState):
 # Build Graph
 builder = StateGraph(AgentState)
 
+from app.agent.nodes import verification_node
+
 builder.add_node("planner", planner_node)
-# Add RetryPolicy to search node
-builder.add_node(
-    "search", 
-    search_node, 
-    retry=RetryPolicy(max_attempts=3)
-)
+builder.add_node("search", search_node)
 builder.add_node("sanitization", sanitization_node)
 builder.add_node("synthesizer", synthesizer_node)
+builder.add_node("verification", verification_node)
 builder.add_node("critique", critique_node)
 
 builder.set_entry_point("planner")
 builder.add_conditional_edges("planner", continue_to_search, ["search"])
 builder.add_edge("search", "sanitization")
 builder.add_edge("sanitization", "synthesizer")
-builder.add_edge("synthesizer", "critique")
+builder.add_edge("synthesizer", "verification")
+builder.add_edge("verification", "critique")
 builder.add_conditional_edges(
     "critique",
     should_continue,
@@ -54,4 +53,5 @@ builder.add_conditional_edges(
     }
 )
 
-agent_graph = builder.compile()
+def get_compiled_graph(checkpointer=None):
+    return builder.compile(checkpointer=checkpointer, interrupt_before=["search"])
