@@ -5,7 +5,6 @@ from app.db.mongo import db
 from app.core.config import settings
 from app.worker.celery_app import celery_app
 import uuid
-import asyncio
 from app.core.redis import get_async_redis_pubsub_client
 import json
 import logging
@@ -108,7 +107,6 @@ async def stream_job_updates(job_id: str):
                     parsed = json.loads(data)
                     if parsed.get("event_type") in TERMINAL_EVENT_TYPES:
                         break
-                await asyncio.sleep(0.1)
         finally:
             await pubsub.unsubscribe(job_channel(job_id))
 

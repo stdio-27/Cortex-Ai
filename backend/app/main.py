@@ -1,12 +1,13 @@
 from fastapi import FastAPI
 from app.api.routes import router
-from app.db.mongo import connect_to_mongo, close_mongo_connection, db
+from app.db.mongo import connect_to_mongo, close_mongo_connection, ensure_indexes, db
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_to_mongo()
+    await ensure_indexes()
     app.state.mongo_client = db.async_client
     yield
     app.state.mongo_client.close()

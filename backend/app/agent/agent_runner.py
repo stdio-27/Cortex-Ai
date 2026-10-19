@@ -6,6 +6,51 @@ from app.agent.graph import get_compiled_graph
 from langgraph.checkpoint.mongodb import MongoDBSaver
 from app.schemas.events import SystemEventV1
 from app.services.pubsub_service import PubSubService
+from app.services.deps import Deps
+
+# Per-process caches. Compiling the graph and constructing the Groq/Tavily clients
+# is pure overhead when repeated for every job; neither holds per-job state (the
+# job's deps and thread_id travel in the run config).
+_graph_cache = {"client": None, "graph": None}
+_services_cache = {}
+
+
+def _get_graph():
+    """Compiled graph + checkpointer, rebuilt only if the Mongo client changes."""
+    client = db.sync_client
+    if _graph_cache["graph"] is None or _graph_cache["client"] is not client:
+        _graph_cache["graph"] = get_compiled_graph(MongoDBSaver(client))
+        _graph_cache["client"] = client
+    return _graph_cache["graph"]
+
+
+def _get_services():
+    """(search_service, llm_service), built once per distinct configuration."""
+    key = (
+        bool(settings.MOCK_LLM_FOR_LOAD_TEST),
+        settings.GROQ_MODEL,
+        settings.GROQ_FAST_MODEL,
+        settings.GROQ_API_KEY,
+        settings.TAVILY_API_KEY,
+    )
+    if key not in _services_cache:
+        from app.services.tavily_service import TavilyService, MockTavilyService
+        from app.services.llm_service import LLMService, MockLLMService
+        from tavily import TavilyClient
+
+        if settings.MOCK_LLM_FOR_LOAD_TEST:
+            _services_cache[key] = (MockTavilyService(), MockLLMService())
+        else:
+            _services_cache[key] = (
+                TavilyService(TavilyClient(api_key=settings.TAVILY_API_KEY)),
+                LLMService(
+                    groq_model=settings.GROQ_MODEL,
+                    groq_fast_model=settings.GROQ_FAST_MODEL,
+                    api_key=settings.GROQ_API_KEY,
+                ),
+            )
+    return _services_cache[key]
+
 
 async def run_agent(job_id: str, resume_data: dict = None):
     from app.core.redis import get_redis_client, get_redis_pubsub_client
@@ -46,21 +91,7 @@ async def run_agent(job_id: str, resume_data: dict = None):
             "iteration_count": 0
         }
         
-        from app.services.tavily_service import TavilyService, MockTavilyService
-        from app.services.llm_service import LLMService, MockLLMService
-        from app.services.deps import Deps
-        from tavily import TavilyClient
-        
-        if settings.MOCK_LLM_FOR_LOAD_TEST:
-            tavily_service = MockTavilyService()
-            llm_service = MockLLMService()
-        else:
-            tavily_service = TavilyService(TavilyClient(api_key=settings.TAVILY_API_KEY))
-            llm_service = LLMService(
-                groq_model=settings.GROQ_MODEL,
-                groq_fast_model=settings.GROQ_FAST_MODEL,
-                api_key=settings.GROQ_API_KEY
-            )
+        tavily_service, llm_service = _get_services()
         
         deps = Deps(
             pubsub_service=PubSubService(pubsub_client),
@@ -68,9 +99,7 @@ async def run_agent(job_id: str, resume_data: dict = None):
             llm_service=llm_service
         )
         
-        # Checkpointer setup
-        checkpointer = MongoDBSaver(db.sync_client)
-        agent_graph = get_compiled_graph(checkpointer)
+        agent_graph = _get_graph()
         
         config = {
             "configurable": {
