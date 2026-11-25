@@ -3,7 +3,7 @@ uvicorn[standard]
 motor
 pydantic
 pydantic-settings
-celery
+celery[redis]
 redis
 langgraph
 langchain

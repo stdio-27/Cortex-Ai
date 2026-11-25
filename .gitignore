@@ -1,6 +1,8 @@
 # Environment variables
 .env
-**/.env
+.env.*
+!.env.example
+!.env.*.example
 
 # Python
 __pycache__/
@@ -38,3 +40,5 @@ lerna-debug.log*
 
 # Test files
 .pytest_cache/
+.venv/
+.coverage

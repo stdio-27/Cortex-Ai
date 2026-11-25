@@ -7,7 +7,7 @@ sync_pool = redis.ConnectionPool.from_url(
     settings.REDIS_URI, 
     max_connections=20,
     health_check_interval=30,
-    socket_timeout=5.0
+    socket_timeout=5.0,
 )
 
 # Async pool for FastAPI
@@ -15,23 +15,23 @@ async_pool = aioredis.ConnectionPool.from_url(
     settings.REDIS_URI, 
     max_connections=100,
     health_check_interval=30,
-    socket_timeout=5.0
+    socket_timeout=5.0,
 )
 
 # Sync pool for pub/sub
 pubsub_sync_pool = redis.ConnectionPool.from_url(
-    settings.REDIS_PUBSUB_URI, 
+    settings.redis_pubsub_url,
     max_connections=20,
     health_check_interval=30,
-    socket_timeout=5.0
+    socket_timeout=5.0,
 )
 
 # Async pool for FastAPI pub/sub (SSE)
 pubsub_async_pool = aioredis.ConnectionPool.from_url(
-    settings.REDIS_PUBSUB_URI, 
+    settings.redis_pubsub_url,
     max_connections=100,
     health_check_interval=30,
-    socket_timeout=5.0
+    socket_timeout=5.0,
 )
 
 def get_redis_client() -> redis.Redis:

@@ -1,10 +1,14 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from app.models.job import JobRequest, JobResponse, Job
 from app.db.mongo import db
 from app.core.config import settings
 from app.worker.celery_app import celery_app
 import uuid
+from time import monotonic
+
+from anyio import CancelScope
 from app.core.redis import get_async_redis_pubsub_client
 import json
 import logging
@@ -34,12 +38,13 @@ async def resume_job(job_id: str, request: ResumeRequest):
             logger.warning("Could not clear last event for job %s: %s", job_id, exc)
 
         # Enqueue Celery task and pass resume_data
-        celery_app.send_task('process_job', args=[job_id, request.model_dump()])
+        await run_in_threadpool(
+            celery_app.send_task, "process_job", args=[job_id, request.model_dump()]
+        )
         return {"job_id": job_id, "status": "RESUMING"}
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to resume job: {str(e)}")
+    except Exception:
+        logger.exception("Failed to resume job %s", job_id)
+        raise HTTPException(status_code=503, detail="Could not resume research job")
 
 @router.post("/jobs", response_model=JobResponse)
 async def create_job(request: JobRequest):
@@ -55,25 +60,25 @@ async def create_job(request: JobRequest):
         await db.async_client[settings.MONGODB_DB_NAME]["jobs"].insert_one(job_data.model_dump())
         
         # Enqueue Celery task by name (avoids importing the full agent chain)
-        celery_app.send_task('process_job', args=[job_id])
+        await run_in_threadpool(celery_app.send_task, "process_job", args=[job_id])
         
         return JobResponse(job_id=job_id, status="PENDING")
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to create job: {str(e)}")
+    except Exception:
+        logger.exception("Failed to create job")
+        raise HTTPException(status_code=503, detail="Could not start research job")
 
 @router.get("/jobs/{job_id}/stream")
 async def stream_job_updates(job_id: str):
     async def event_generator():
         redis_client = get_async_redis_pubsub_client()
         pubsub = redis_client.pubsub()
-        # Subscribe BEFORE reading the snapshot: anything published after this
-        # point is delivered live, anything before it is in the snapshot. Doing
-        # it the other way round would leave a gap where events are lost.
-        await pubsub.subscribe(job_channel(job_id))
-
         try:
+            # SUBSCRIBE writes the command. Wait for Redis to confirm it before
+            # reading the snapshot on a separate Redis connection.
+            await pubsub.subscribe(job_channel(job_id))
+            if await pubsub.parse_response(block=False, timeout=5) is None:
+                raise TimeoutError("Redis did not acknowledge the job subscription")
+
             replayed = None
             try:
                 snapshot = await redis_client.get(f"{LAST_EVENT_KEY_PREFIX}{job_id}")
@@ -92,6 +97,7 @@ async def stream_job_updates(job_id: str):
                     if replay_type in TERMINAL_EVENT_TYPES:
                         return
 
+            next_heartbeat = monotonic() + 15
             while True:
                 message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if message:
@@ -107,10 +113,19 @@ async def stream_job_updates(job_id: str):
                     parsed = json.loads(data)
                     if parsed.get("event_type") in TERMINAL_EVENT_TYPES:
                         break
+                    next_heartbeat = monotonic() + 15
+                elif monotonic() >= next_heartbeat:
+                    yield ": keep-alive\n\n"
+                    next_heartbeat = monotonic() + 15
         finally:
-            await pubsub.unsubscribe(job_channel(job_id))
+            with CancelScope(shield=True):
+                await pubsub.aclose()
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
 
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str):

@@ -1,0 +1,59 @@
+# yaml-language-server: $schema=https://render.com/schema/render.yaml.json
+services:
+  - type: web
+    name: cortex-api
+    runtime: docker
+    region: oregon
+    plan: 0.5c-512mb
+    rootDir: backend
+    dockerCommand: >-
+      sh -c 'exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT"'
+    healthCheckPath: /health
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: research_copilot
+      - key: REDIS_URI
+        fromService:
+          type: keyvalue
+          name: cortex-key-value
+          property: connectionString
+      - key: CORS_ORIGINS
+        sync: false
+
+  - type: worker
+    name: cortex-worker
+    runtime: docker
+    region: oregon
+    plan: 1c-2g
+    rootDir: backend
+    dockerCommand: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: research_copilot
+      - key: REDIS_URI
+        fromService:
+          type: keyvalue
+          name: cortex-key-value
+          property: connectionString
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: GROQ_FAST_MODEL
+        value: openai/gpt-oss-20b
+      - key: MOCK_LLM_FOR_LOAD_TEST
+        value: "false"
+
+  - type: keyvalue
+    name: cortex-key-value
+    region: oregon
+    plan: 256mb
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+    persistenceMode: journal-snapshot

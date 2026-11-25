@@ -35,7 +35,8 @@ def mock_redis(mocker):
     
     # Mock pubsub methods
     mock_pubsub.subscribe = AsyncMock()
-    mock_pubsub.unsubscribe = AsyncMock()
+    mock_pubsub.parse_response = AsyncMock(return_value=[b"subscribe", b"job_updates:123", 1])
+    mock_pubsub.aclose = AsyncMock()
     
     # Mock get_message to return a dummy DONE message to end the stream
     mock_pubsub.get_message = AsyncMock(side_effect=[

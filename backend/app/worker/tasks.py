@@ -119,6 +119,9 @@ def process_job(self, job_id: str, resume_data: Optional[dict] = None):
     lock = JobLock(redis_client, job_id, owner=str(self.request.id))
 
     if not lock.acquire():
+        # An approval can arrive while the planner is releasing its lock.
+        if resume_data is not None and self.request.retries < MAX_RETRIES:
+            raise self.retry(countdown=2, max_retries=MAX_RETRIES)
         logger.info("Job %s is already being processed; skipping duplicate dispatch.", job_id)
         return {"job_id": job_id, "status": "SKIPPED_DUPLICATE"}
 
@@ -170,7 +173,7 @@ def _extract_job_id(args: Any, kwargs: Any) -> Optional[str]:
 def _user_facing_error(exc: BaseException) -> str:
     if is_rate_limit_error(exc):
         return "The AI provider is rate limiting requests. Please try again in a few minutes."
-    return f"{type(exc).__name__}: {str(exc)[:300]}"
+    return "Research failed. Please try again."
 
 
 @task_failure.connect

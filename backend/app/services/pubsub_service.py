@@ -36,20 +36,16 @@ class PubSubService:
     def publish_event(self, event: SystemEventV1) -> bool:
         payload = event.to_wire()
         try:
-            self.redis_client.publish(job_channel(event.job_id), payload)
+            # Serialize the snapshot and publication together so a subscriber
+            # can always recover a publication that preceded its subscription.
+            with self.redis_client.pipeline(transaction=True) as pipe:
+                pipe.set(f"{LAST_EVENT_KEY_PREFIX}{event.job_id}", payload, ex=LAST_EVENT_TTL_SECONDS)
+                pipe.publish(job_channel(event.job_id), payload)
+                pipe.execute()
         except Exception as exc:
             logger.warning("Pub/Sub publish failed for job %s: %s", event.job_id, exc)
             return False
 
-        # Keep the latest event so a late SSE subscriber (or the worker, when it
-        # needs to know the current stage) can recover state; Pub/Sub itself is
-        # fire-and-forget.
-        try:
-            self.redis_client.set(
-                f"{LAST_EVENT_KEY_PREFIX}{event.job_id}", payload, ex=LAST_EVENT_TTL_SECONDS
-            )
-        except Exception as exc:
-            logger.debug("Could not store last event for job %s: %s", event.job_id, exc)
         return True
 
     def publish_status(

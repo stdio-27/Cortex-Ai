@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+
 type JobStep = 'Planner' | 'AWAITING_HUMAN_FEEDBACK' | 'Search' | 'Synthesizing' | 'Verification' | 'Critiquing' | 'DONE' | 'ERROR';
 
 interface JobState {
@@ -50,7 +52,7 @@ export const useJobStore = create<JobState>((set, get) => ({
     set({ status: 'PENDING' });
 
     try {
-      const res = await fetch('/api/jobs', {
+      const res = await fetch(`${apiBaseUrl}/api/jobs`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -71,7 +73,7 @@ export const useJobStore = create<JobState>((set, get) => ({
   resumeJob: async (jobId: string, approvedQueries: string[]) => {
     set({ status: 'PROCESSING', currentStep: 'Search' });
     try {
-      const res = await fetch(`/api/jobs/${jobId}/resume`, {
+      const res = await fetch(`${apiBaseUrl}/api/jobs/${jobId}/resume`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -90,7 +92,7 @@ export const useJobStore = create<JobState>((set, get) => ({
       eventSource.close();
     }
 
-    eventSource = new EventSource(`/api/jobs/${jobId}/stream`);
+    eventSource = new EventSource(`${apiBaseUrl}/api/jobs/${jobId}/stream`);
 
     eventSource.onmessage = (event) => {
       const parsedEvent = JSON.parse(event.data);
@@ -123,7 +125,7 @@ export const useJobStore = create<JobState>((set, get) => ({
 
   fetchReport: async (jobId: string) => {
     try {
-      const res = await fetch(`/api/jobs/${jobId}`);
+      const res = await fetch(`${apiBaseUrl}/api/jobs/${jobId}`);
       if (!res.ok) throw new Error('Failed to fetch report');
       const data = await res.json();
       set({ 

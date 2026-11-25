@@ -5,6 +5,7 @@ from app.db.mongo import connect_to_mongo_sync, close_mongo_connection_sync
 
 celery_app = Celery(
     "worker",
+    # Settings adds certificate and hostname verification to rediss:// URLs.
     broker=settings.REDIS_URI,
     backend=settings.REDIS_URI,
     include=["app.worker.tasks"]
