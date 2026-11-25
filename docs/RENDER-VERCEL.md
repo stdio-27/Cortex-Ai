@@ -4,22 +4,22 @@
 
 Create a cluster and a database user with `readWrite` on `research_copilot` and `checkpointing_db`. LangGraph uses the second database to persist plans and resume checkpoints. In Atlas, open **Connect → Drivers** and copy the `mongodb+srv://` URI. Replace the password placeholder with the URL-encoded database password.
 
-In Atlas **Network Access**, allow the outbound CIDRs of your Render web service and worker. The Blueprint places both in Oregon. After Render creates the services, find the exact CIDRs under **Connect → Outbound** for each service. If the first deploy starts before the Atlas rules are ready, add the rules and redeploy both services.
+In Atlas **Network Access**, allow the outbound CIDRs of your Render web service. The Blueprint places the web service and Key Value in Oregon. After Render creates the web service, find its exact CIDRs under **Connect → Outbound**. If the first deploy starts before the Atlas rules are ready, add the rules and redeploy the web service.
 
 ## 2. Create the Render Blueprint
 
-Push the repository and select **New → Blueprint** in Render. The root `render.yaml` provisions three paid resources: a 512 MB Docker web service, a 2 GB Docker worker with concurrency 2, and a private, persistent 256 MB Key Value instance.
+Push the repository and select **New → Blueprint** in Render. The root `render.yaml` provisions one free Docker web service and one free private Key Value instance. The web container starts FastAPI and a single-slot Celery worker. Render's free tier spins the web service down after 15 minutes of inactivity, pausing the worker as well. Key Value is in-memory only, so a Redis restart can lose queued jobs and SSE snapshots. Atlas keeps reports and checkpoints across service restarts. This setup is intended for demos.
 
 | Service | Environment variable | Value |
 | --- | --- | --- |
-| Web and worker | `MONGODB_URI` | The Atlas Drivers URI |
-| Worker | `GROQ_API_KEY` | Create in the GroqCloud Console under **API Keys** |
-| Worker | `TAVILY_API_KEY` | Copy from your Tavily dashboard |
+| Web | `MONGODB_URI` | The Atlas Drivers URI |
+| Web | `GROQ_API_KEY` | Create in the GroqCloud Console under **API Keys** |
+| Web | `TAVILY_API_KEY` | Copy from your Tavily dashboard |
 | Web | `CORS_ORIGINS` | `https://<your-vercel-project>.vercel.app` or your intended frontend origin. Use the localhost defaults temporarily if the domain is unknown. |
 
-The Blueprint sets `MONGODB_DB_NAME=research_copilot`, `GROQ_MODEL=openai/gpt-oss-20b`, `GROQ_FAST_MODEL=openai/gpt-oss-20b`, and `MOCK_LLM_FOR_LOAD_TEST=false`. Render supplies `PORT` and wires `REDIS_URI` into both services from Key Value. Leave `REDIS_PUBSUB_URI` unset to share the same connection URL. If you override it with an external Redis URL, set the same value in both services. A `rediss://` URL uses certificate and hostname verification.
+The Blueprint sets `MONGODB_DB_NAME=research_copilot`, `GROQ_MODEL=openai/gpt-oss-20b`, `GROQ_FAST_MODEL=openai/gpt-oss-20b`, and `MOCK_LLM_FOR_LOAD_TEST=false`. Render supplies `PORT` and wires `REDIS_URI` from Key Value. Leave `REDIS_PUBSUB_URI` unset to share the same connection URL. A `rediss://` URL uses certificate and hostname verification.
 
-Copy the web service URL after it deploys. Check `/health` for process liveness, `/api/health/ready` for MongoDB and Redis connectivity, and the worker logs for Celery readiness. Configure the Key Value memory budget for peak load and monitor memory usage. The broker uses `noeviction` so memory pressure surfaces as write errors instead of silently evicting queued work.
+Copy the web service URL after it deploys. Check `/health` for process liveness, `/api/health/ready` for MongoDB and Redis connectivity, and the web service logs for Celery readiness. The broker uses `noeviction` so memory pressure surfaces as write errors instead of silently evicting queued work.
 
 ## 3. Deploy the frontend on Vercel
 
